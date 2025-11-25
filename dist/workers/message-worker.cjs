@@ -49,7 +49,10 @@ port.on("message", async (task) => {
         result = await decompressData(task.data);
         break;
       case "transform":
-        result = await transformPayload(task.data, task.options?.transformer);
+        result = await transformPayload(
+          task.data,
+          task.options?.transformer
+        );
         break;
       default:
         throw new Error(`Unknown task type: ${task.type}`);

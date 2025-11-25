@@ -50,4 +50,4 @@ interface Transport {
     off<K extends keyof TransportEvents>(event: K, handler: TransportEvents[K]): void;
 }
 
-export { ConsoleTransport as C, LogLevel as L, NoopTransport as N, type Transport as T, Logger as a, type LoggerOptions as b, type LogTransport as c, type TransportEvents as d, type TransportState as e };
+export { ConsoleTransport as C, Logger as L, NoopTransport as N, type Transport as T, type LoggerOptions as a, LogLevel as b, type LogTransport as c, type TransportEvents as d, type TransportState as e };

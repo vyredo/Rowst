@@ -14,6 +14,6 @@
     "rootDir": ".",
     "resolveJsonModule": true
   },
-  "include": ["src", "tests", "examples"],
+  "include": ["src", "tests"],
   "exclude": ["dist", "node_modules"]
 }

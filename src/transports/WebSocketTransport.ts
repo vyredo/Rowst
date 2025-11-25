@@ -15,16 +15,9 @@ type WebSocketLike = {
   binaryType?: string;
   send(data: string | ArrayBuffer | Uint8Array): void;
   close(code?: number, reason?: string): void;
-  addEventListener?(
-    type: string,
-    listener: EventListener,
-    options?: boolean | AddEventListenerOptions
-  ): void;
-  removeEventListener?(
-    type: string,
-    listener: EventListener,
-    options?: boolean | EventListenerOptions
-  ): void;
+  // Widen to support both DOM WebSocket and `ws` types
+  addEventListener?(...args: any[]): void;
+  removeEventListener?(...args: any[]): void;
   onmessage?: ((event: MessageEvent) => void) | null;
   onopen?: ((event: Event) => void) | null;
   onclose?: ((event: CloseEvent) => void) | null;
@@ -283,7 +276,7 @@ export class WebSocketTransport implements Transport {
     }
 
     if (typeof Blob !== 'undefined' && data instanceof Blob) {
-      data
+      (data as Blob)
         .arrayBuffer()
         .then((buffer) => this.dispatchMessage(new Uint8Array(buffer)))
         .catch((error) => {

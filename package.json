@@ -1,74 +1,74 @@
 {
-  "name": "rowst",
-  "version": "0.1.0",
-  "description": "Zero-dependency request-response correlation over bidirectional transports (REST over WebSocket/Transport)",
-  "keywords": [
-    "rest",
-    "websocket",
-    "webrtc",
-    "rpc",
-    "correlation",
-    "transport",
-    "messaging",
-    "zero-dependency",
-    "mcp"
-  ],
-  "author": "Your Name <your.email@example.com>",
-  "license": "MIT",
-  "homepage": "https://github.com/yourusername/rowst#readme",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/rowst.git"
-  },
-  "bugs": {
-    "url": "https://github.com/yourusername/rowst/issues"
-  },
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "require": "./dist/index.cjs",
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./mcp": {
-      "require": "./dist/mcp/index.cjs",
-      "import": "./dist/mcp/index.js",
-      "types": "./dist/mcp/index.d.ts"
-    },
-    "./workers": {
-      "require": "./dist/workers/index.cjs",
-      "import": "./dist/workers/index.js",
-      "types": "./dist/workers/index.d.ts"
-    }
-  },
-  "files": [
-    "dist",
-    "dist/workers",
-    "README.md",
-    "LICENSE",
-    "docs"
-  ],
-  "scripts": {
-    "build": "tsup",
-    "test": "npm run build && vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
-    "prepublishOnly": "npm run typecheck && npm run build && npm test"
-  },
-  "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@types/ws": "^8.18.1",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
-    "eslint": "^8.55.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.3.0",
-    "vitest": "^1.0.0",
-    "ws": "^8.18.3"
-  }
+	"name": "rowst",
+	"version": "0.1.0",
+	"description": "Zero-dependency request-response correlation over bidirectional transports (REST over WebSocket/Transport)",
+	"keywords": [
+		"rest",
+		"websocket",
+		"webrtc",
+		"rpc",
+		"correlation",
+		"transport",
+		"messaging",
+		"zero-dependency",
+		"mcp"
+	],
+	"author": "Your Name <your.email@example.com>",
+	"license": "MIT",
+	"homepage": "https://github.com/yourusername/rowst#readme",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/yourusername/rowst.git"
+	},
+	"bugs": {
+		"url": "https://github.com/yourusername/rowst/issues"
+	},
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"require": "./dist/index.cjs",
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./mcp": {
+			"require": "./dist/mcp/index.cjs",
+			"import": "./dist/mcp/index.js",
+			"types": "./dist/mcp/index.d.ts"
+		},
+		"./workers": {
+			"require": "./dist/workers/index.cjs",
+			"import": "./dist/workers/index.js",
+			"types": "./dist/workers/index.d.ts"
+		}
+	},
+	"files": [
+		"dist",
+		"dist/workers",
+		"README.md",
+		"LICENSE",
+		"docs"
+	],
+	"scripts": {
+		"build": "tsup",
+		"test": "npm run build && vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"typecheck": "tsc --noEmit",
+		"lint": "eslint src",
+		"prepublishOnly": "npm run typecheck && npm run build && npm test"
+	},
+	"devDependencies": {
+		"@types/node": "^20.10.0",
+		"@types/ws": "^8.18.1",
+		"@typescript-eslint/eslint-plugin": "^6.15.0",
+		"@typescript-eslint/parser": "^6.15.0",
+		"eslint": "^8.55.0",
+		"tsup": "^8.0.0",
+		"typescript": "^5.3.0",
+		"vitest": "^1.0.0",
+		"ws": "^8.18.3"
+	}
 }

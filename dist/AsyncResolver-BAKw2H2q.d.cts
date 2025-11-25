@@ -1,4 +1,4 @@
-import { a as Logger, T as Transport } from './Transport-CRcAAfoD.cjs';
+import { L as Logger, T as Transport } from './Transport-sRzkGEga.cjs';
 
 type MessageType = 'request' | 'response' | 'notification';
 interface Message<TPayload = unknown> {
