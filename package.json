@@ -47,12 +47,17 @@
 			"require": "./dist/http/index.cjs",
 			"import": "./dist/http/index.js",
 			"types": "./dist/http/index.d.ts"
+		},
+		"./express": {
+			"require": "./dist/express/index.cjs",
+			"import": "./dist/express/index.js",
+			"types": "./dist/express/index.d.ts"
 		}
 	},
 	"peerDependencies": {
-		"hono": "^4.0.0",
 		"express": "^4.0.0",
-		"fastify": "^4.0.0"
+		"fastify": "^4.0.0",
+		"hono": "^4.0.0"
 	},
 	"peerDependenciesMeta": {
 		"hono": {
@@ -87,6 +92,7 @@
 		"@typescript-eslint/eslint-plugin": "^6.15.0",
 		"@typescript-eslint/parser": "^6.15.0",
 		"eslint": "^8.55.0",
+		"hono": "^4.10.7",
 		"tsup": "^8.0.0",
 		"typescript": "^5.3.0",
 		"vitest": "^1.0.0",

@@ -9,6 +9,7 @@ export default defineConfig({
 		// Build the worker script as its own artifact so Worker() can load it at runtime
 		"workers/message-worker": "src/workers/message-worker.ts",
 		"http/index": "src/http/index.ts",
+		"express/index": "src/express/index.ts",
 	},
 	format: ["cjs", "esm"],
 	dts: true,
