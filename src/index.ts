@@ -38,6 +38,7 @@ export type {
 	TransportEvents,
 	TransportState,
 } from "./transports/Transport.js";
+export { isTransportClosed, isTransportReady } from "./transports/Transport.js";
 export { WebRTCTransport } from "./transports/WebRTCTransport.js";
 export { WebSocketTransport } from "./transports/WebSocketTransport.js";
 export { WorkerPool } from "./workers/WorkerPool.js";

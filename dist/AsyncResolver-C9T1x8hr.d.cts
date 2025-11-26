@@ -1,6 +1,6 @@
-import { L as Logger, T as Transport } from './Transport-sRzkGEga.cjs';
+import { L as Logger, T as Transport, e as TransportState, b as LogLevel } from './logger-CBj8alH5.cjs';
 
-type MessageType = 'request' | 'response' | 'notification';
+type MessageType = "request" | "response" | "notification";
 interface Message<TPayload = unknown> {
     id: string;
     type: MessageType;
@@ -27,9 +27,27 @@ declare enum ErrorCode {
     SEND_FAILED = "SEND_FAILED"
 }
 interface CorrelatorOptions {
+    /**
+     * Default request timeout in milliseconds
+     */
     defaultTimeout?: number;
+    /**
+     * Maximum number of concurrent inflight requests
+     */
     maxInflight?: number;
+    /**
+     * Custom logger
+     */
     logger?: Logger;
+    /**
+     * Response interceptor to validate/transform responses before resolving
+     */
+    responseInterceptor?: <T>(message: Message<T>) => Message<T> | Promise<Message<T>>;
+    /**
+     * Request deduplication strategy. If true, uses JSON.stringify(payload) as the key.
+     * Or provide a function that returns a cache key string for the given payload.
+     */
+    deduplicateRequests?: boolean | ((payload: unknown) => string);
 }
 interface RequestOptions {
     timeout?: number;
@@ -37,6 +55,10 @@ interface RequestOptions {
     tags?: string[];
     jitterFactor?: number;
     backoffMultiplier?: number;
+    /**
+     * Custom metadata to attach to the request envelope
+     */
+    meta?: Record<string, unknown>;
     [key: string]: unknown;
 }
 interface Metrics {
@@ -66,6 +88,10 @@ declare class AsyncResolver {
     private readonly options;
     private readonly pending;
     private readonly metrics;
+    private readonly responseInterceptor?;
+    private readonly deduplicateFn?;
+    private readonly inflightByKey;
+    private shuttingDown;
     private readonly handleMessage;
     private readonly handleOpen;
     private readonly handleClose;
@@ -77,7 +103,52 @@ declare class AsyncResolver {
     getInflightCount(): number;
     getMetrics(): Metrics & {
         stats: LatencyStats;
+        dedupCacheSize: number;
     };
+    /**
+     * Wait for transport to reach 'open' state.
+     * Resolves immediately if already open.
+     * Rejects on timeout or if transport closes/errors.
+     */
+    waitForReady(options?: {
+        timeout?: number;
+        throwOnTimeout?: boolean;
+    }): Promise<void>;
+    /**
+     * Check if transport is ready to send requests.
+     */
+    isReady(): boolean;
+    /**
+     * Get current transport state.
+     */
+    getTransportState(): TransportState;
+    /**
+     * Gracefully close the resolver.
+     * - Stop accepting new requests
+     * - Wait for pending requests to complete or timeout
+     * - Close transport
+     */
+    close(options?: {
+        timeout?: number;
+        force?: boolean;
+    }): Promise<void>;
+    /**
+     * Get detailed info about pending requests (for debugging).
+     */
+    getDebugInfo(): {
+        pending: Array<{
+            id: string;
+            age: number;
+            attempts: number;
+            meta: Record<string, unknown>;
+        }>;
+        metrics: ReturnType<AsyncResolver["getMetrics"]>;
+        transportState: TransportState;
+    };
+    /**
+     * Enable/disable trace logging at runtime.
+     */
+    setLogLevel(level: LogLevel): void;
     destroy(): void;
     private requestAttempt;
     private sendSerialized;

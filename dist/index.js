@@ -1,38 +1,3 @@
-// src/core/uuid.ts
-var getCrypto = /* @__PURE__ */ (() => {
-  let cached = null;
-  return () => {
-    if (cached) return cached;
-    if (typeof globalThis !== "undefined") {
-      const candidate = globalThis.crypto ?? globalThis.webcrypto;
-      if (candidate && typeof candidate.getRandomValues === "function") {
-        cached = candidate;
-        return cached;
-      }
-    }
-    throw new Error("No crypto implementation available");
-  };
-})();
-function generateUUID() {
-  const bytes = new Uint8Array(16);
-  getCrypto().getRandomValues(bytes);
-  bytes[6] = bytes[6] & 15 | 64;
-  bytes[8] = bytes[8] & 63 | 128;
-  const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-  return [
-    hex.substring(0, 8),
-    hex.substring(8, 12),
-    hex.substring(12, 16),
-    hex.substring(16, 20),
-    hex.substring(20, 32)
-  ].join("-");
-}
-function isValidUUID(uuid) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    uuid
-  );
-}
-
 // src/core/errors.ts
 var RowstError = class extends Error {
   constructor(message, code, details) {
@@ -195,6 +160,41 @@ var ErrorCode = /* @__PURE__ */ ((ErrorCode2) => {
   return ErrorCode2;
 })(ErrorCode || {});
 
+// src/core/uuid.ts
+var getCrypto = /* @__PURE__ */ (() => {
+  let cached = null;
+  return () => {
+    if (cached) return cached;
+    if (typeof globalThis !== "undefined") {
+      const candidate = globalThis.crypto ?? globalThis.webcrypto;
+      if (candidate && typeof candidate.getRandomValues === "function") {
+        cached = candidate;
+        return cached;
+      }
+    }
+    throw new Error("No crypto implementation available");
+  };
+})();
+function generateUUID() {
+  const bytes = new Uint8Array(16);
+  getCrypto().getRandomValues(bytes);
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return [
+    hex.substring(0, 8),
+    hex.substring(8, 12),
+    hex.substring(12, 16),
+    hex.substring(16, 20),
+    hex.substring(20, 32)
+  ].join("-");
+}
+function isValidUUID(uuid) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    uuid
+  );
+}
+
 // src/core/AsyncResolver.ts
 var DEFAULT_TIMEOUT = 3e4;
 var DEFAULT_MAX_INFLIGHT = 1e3;
@@ -287,13 +287,17 @@ var AsyncResolver = class {
       totalErrors: 0,
       latencies: []
     };
+    this.inflightByKey = /* @__PURE__ */ new Map();
+    // Graceful shutdown guard
+    this.shuttingDown = false;
     this.handleMessage = (data) => {
-      try {
-        this.onTransportMessage(data);
-      } catch (error) {
-        this.logger.error("Failed to process transport message", this.describeError(error));
+      void this.onTransportMessage(data).catch((error) => {
+        this.logger.error(
+          "Failed to process transport message",
+          this.describeError(error)
+        );
         this.metrics.totalErrors += 1;
-      }
+      });
     };
     this.handleOpen = () => {
       this.logger.debug("Transport opened");
@@ -308,17 +312,44 @@ var AsyncResolver = class {
     };
     this.transport = transport;
     this.logger = options.logger ?? fallbackLogger;
+    this.responseInterceptor = options.responseInterceptor;
     this.options = {
       defaultTimeout: options.defaultTimeout ?? DEFAULT_TIMEOUT,
       maxInflight: options.maxInflight ?? DEFAULT_MAX_INFLIGHT,
       latencySampleSize: options.latencySampleSize ?? DEFAULT_LATENCY_SAMPLE_SIZE
     };
+    if (options.deduplicateRequests === true) {
+      this.deduplicateFn = (payload) => JSON.stringify(payload);
+    } else if (typeof options.deduplicateRequests === "function") {
+      this.deduplicateFn = options.deduplicateRequests;
+    }
     this.transport.on("message", this.handleMessage);
     this.transport.on("open", this.handleOpen);
     this.transport.on("close", this.handleClose);
     this.transport.on("error", this.handleError);
   }
   async request(payload, options) {
+    if (this.shuttingDown) {
+      throw new TransportClosedError("Resolver is closing");
+    }
+    if (this.deduplicateFn) {
+      const cacheKey = this.deduplicateFn(payload);
+      const existing = this.inflightByKey.get(cacheKey);
+      if (existing) {
+        this.logger.debug("Deduplicating request", { cacheKey });
+        return existing;
+      }
+      const promise = this.requestAttempt(
+        payload,
+        options,
+        1
+      );
+      this.inflightByKey.set(cacheKey, promise);
+      promise.finally(() => {
+        this.inflightByKey.delete(cacheKey);
+      });
+      return promise;
+    }
     return this.requestAttempt(payload, options, 1);
   }
   async requestWithRetry(payload, options) {
@@ -327,7 +358,11 @@ var AsyncResolver = class {
     let lastError;
     while (attempt <= retries + 1) {
       try {
-        const response = await this.requestAttempt(payload, options, attempt);
+        const response = await this.requestAttempt(
+          payload,
+          options,
+          attempt
+        );
         if (!response.meta) {
           response.meta = { attempts: attempt };
         } else {
@@ -368,8 +403,139 @@ var AsyncResolver = class {
     return {
       ...this.metrics,
       inflightCount: this.pending.size,
-      stats: ensureLatencyStats(this.metrics.latencies)
+      stats: ensureLatencyStats(this.metrics.latencies),
+      // Add deduplication stats
+      dedupCacheSize: this.inflightByKey.size
     };
+  }
+  /**
+   * Wait for transport to reach 'open' state.
+   * Resolves immediately if already open.
+   * Rejects on timeout or if transport closes/errors.
+   */
+  async waitForReady(options) {
+    const timeout = options?.timeout ?? 5e3;
+    const throwOnTimeout = options?.throwOnTimeout ?? true;
+    if (this.transport.readyState === "open") {
+      return;
+    }
+    if (this.transport.readyState === "closed" || this.transport.readyState === "closing") {
+      throw new TransportClosedError("Transport is not open");
+    }
+    return new Promise((resolve, reject) => {
+      let timeoutHandle = null;
+      const cleanup = () => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        this.transport.off("open", onOpen);
+        this.transport.off("close", onClose);
+        this.transport.off("error", onError);
+      };
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onClose = (event) => {
+        cleanup();
+        reject(
+          new TransportClosedError("Transport closed while waiting", event)
+        );
+      };
+      const onError = (error) => {
+        cleanup();
+        reject(new TransportError("Transport error while waiting", error));
+      };
+      this.transport.on("open", onOpen);
+      this.transport.on("close", onClose);
+      this.transport.on("error", onError);
+      timeoutHandle = setTimeout(() => {
+        cleanup();
+        if (throwOnTimeout) {
+          reject(
+            new TimeoutError(`Transport did not open within ${timeout}ms`)
+          );
+        } else {
+          resolve();
+        }
+      }, timeout);
+    });
+  }
+  /**
+   * Check if transport is ready to send requests.
+   */
+  isReady() {
+    return this.transport.readyState === "open";
+  }
+  /**
+   * Get current transport state.
+   */
+  getTransportState() {
+    return this.transport.readyState;
+  }
+  /**
+   * Gracefully close the resolver.
+   * - Stop accepting new requests
+   * - Wait for pending requests to complete or timeout
+   * - Close transport
+   */
+  async close(options) {
+    const timeout = options?.timeout ?? 3e4;
+    const force = options?.force ?? false;
+    this.logger.info("Closing AsyncResolver", {
+      pendingCount: this.pending.size,
+      timeout,
+      force
+    });
+    this.shuttingDown = true;
+    if (this.pending.size === 0 || force) {
+      this.destroy();
+      this.transport.close();
+      return;
+    }
+    const startTime = Date.now();
+    await new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        if (this.pending.size === 0) {
+          clearInterval(checkInterval);
+          this.destroy();
+          this.transport.close();
+          resolve();
+          return;
+        }
+        if (elapsed >= timeout) {
+          clearInterval(checkInterval);
+          this.logger.warn("Close timeout reached, forcing shutdown", {
+            remainingRequests: this.pending.size
+          });
+          this.destroy();
+          this.transport.close();
+          resolve();
+        }
+      }, 100);
+    });
+  }
+  /**
+   * Get detailed info about pending requests (for debugging).
+   */
+  getDebugInfo() {
+    const now = Date.now();
+    const pending = Array.from(this.pending.entries()).map(([id, req]) => ({
+      id,
+      age: now - req.createdAt,
+      attempts: req.attempts,
+      meta: req.meta
+    }));
+    return {
+      pending,
+      metrics: this.getMetrics(),
+      transportState: this.transport.readyState
+    };
+  }
+  /**
+   * Enable/disable trace logging at runtime.
+   */
+  setLogLevel(level) {
+    this.logger.setLevel(level);
   }
   destroy() {
     this.transport.off("message", this.handleMessage);
@@ -383,7 +549,9 @@ var AsyncResolver = class {
       throw new TransportClosedError();
     }
     if (this.pending.size >= this.options.maxInflight) {
-      throw new BackpressureError(`Max inflight requests (${this.options.maxInflight}) exceeded`);
+      throw new BackpressureError(
+        `Max inflight requests (${this.options.maxInflight}) exceeded`
+      );
     }
     const requestId = generateUUID();
     const timeout = options?.timeout ?? this.options.defaultTimeout;
@@ -403,10 +571,13 @@ var AsyncResolver = class {
         this.pending.delete(requestId);
         this.metrics.totalTimeouts += 1;
         this.metrics.inflightCount = this.pending.size;
-        const timeoutError = new TimeoutError(`Request ${requestId} timed out after ${timeout}ms`, {
-          requestId,
-          timeout
-        });
+        const timeoutError = new TimeoutError(
+          `Request ${requestId} timed out after ${timeout}ms`,
+          {
+            requestId,
+            timeout
+          }
+        );
         this.logger.warn("Request timed out", { requestId, timeout });
         reject(timeoutError);
       }, timeout);
@@ -455,7 +626,7 @@ var AsyncResolver = class {
       throw new TransportError("Transport send failed", error);
     }
   }
-  onTransportMessage(data) {
+  async onTransportMessage(data) {
     const raw = decodeTransportData(data);
     let parsed;
     try {
@@ -465,19 +636,27 @@ var AsyncResolver = class {
     }
     this.validateMessage(parsed);
     if (parsed.type === "response") {
-      this.handleResponse(parsed);
+      await this.handleResponse(parsed);
       return;
     }
     if (parsed.type === "notification") {
-      this.logger.info("Received notification", { id: parsed.id, meta: parsed.meta });
+      this.logger.info("Received notification", {
+        id: parsed.id,
+        meta: parsed.meta
+      });
       return;
     }
-    this.logger.warn("Unhandled message type", { type: parsed.type, id: parsed.id });
+    this.logger.warn("Unhandled message type", {
+      type: parsed.type,
+      id: parsed.id
+    });
   }
-  handleResponse(message) {
+  async handleResponse(message) {
     const pending = this.pending.get(message.id);
     if (!pending) {
-      this.logger.warn("Received response for unknown request", { id: message.id });
+      this.logger.warn("Received response for unknown request", {
+        id: message.id
+      });
       return;
     }
     this.pending.delete(message.id);
@@ -489,18 +668,35 @@ var AsyncResolver = class {
     }
     message.meta.attempts = pending.attempts;
     message.latency = latency;
-    if (message.error) {
-      const rowstError = new RowstError(message.error.message, message.error.code, message.error.details);
+    let processedMessage = message;
+    if (this.responseInterceptor) {
+      try {
+        processedMessage = await this.responseInterceptor(message);
+      } catch (error) {
+        this.logger.error("Response interceptor failed", {
+          id: message.id,
+          error: this.describeError(error)
+        });
+        pending.reject(error);
+        return;
+      }
+    }
+    if (processedMessage.error) {
+      const rowstError = new RowstError(
+        processedMessage.error.message,
+        processedMessage.error.code,
+        processedMessage.error.details
+      );
       rowstError.name = "RowstRemoteError";
       this.logger.warn("Request failed with remote error", {
-        id: message.id,
-        error: message.error
+        id: processedMessage.id,
+        error: processedMessage.error
       });
       pending.reject(rowstError);
       return;
     }
-    this.logger.debug("Resolved request", { id: message.id, latency });
-    pending.resolve(message);
+    this.logger.debug("Resolved request", { id: processedMessage.id, latency });
+    pending.resolve(processedMessage);
   }
   validateMessage(message) {
     if (typeof message !== "object" || message === null) {
@@ -558,6 +754,9 @@ var AsyncResolver = class {
     delete meta.backoffMultiplier;
     if (options?.tags) {
       meta.tags = [...options.tags];
+    }
+    if (options?.meta) {
+      Object.assign(meta, options.meta);
     }
     return meta;
   }
@@ -1081,6 +1280,14 @@ var RowstMCPServer = class {
   }
 };
 
+// src/transports/Transport.ts
+function isTransportReady(transport) {
+  return transport.readyState === "open";
+}
+function isTransportClosed(transport) {
+  return transport.readyState === "closed" || transport.readyState === "closing";
+}
+
 // src/transports/WebRTCTransport.ts
 var createDefaultLogger = (level = 1 /* ERROR */) => new Logger({
   level,
@@ -1480,6 +1687,8 @@ export {
   WorkerPoolResolver,
   generateUUID,
   isErrorMessage,
+  isTransportClosed,
+  isTransportReady,
   isValidUUID,
   toErrorResponse
 };

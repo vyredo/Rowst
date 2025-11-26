@@ -1,4 +1,5 @@
-import { T as Transport, L as Logger, b as LogLevel, e as TransportState, d as TransportEvents } from '../Transport-sRzkGEga.js';
+import { T as Transport, L as Logger, b as LogLevel, e as TransportState, d as TransportEvents } from '../logger-CBj8alH5.js';
+export { i as isTransportClosed, f as isTransportReady } from '../logger-CBj8alH5.js';
 
 interface WebRTCTransportOptions {
     logger?: Logger;

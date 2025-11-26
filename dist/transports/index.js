@@ -1,3 +1,11 @@
+// src/transports/Transport.ts
+function isTransportReady(transport) {
+  return transport.readyState === "open";
+}
+function isTransportClosed(transport) {
+  return transport.readyState === "closed" || transport.readyState === "closing";
+}
+
 // src/core/logger.ts
 var LogLevel = /* @__PURE__ */ ((LogLevel2) => {
   LogLevel2[LogLevel2["SILENT"] = 0] = "SILENT";
@@ -78,6 +86,186 @@ var ConsoleTransport = class {
   }
 };
 
+// src/transports/WebRTCTransport.ts
+var createDefaultLogger = (level = 1 /* ERROR */) => new Logger({
+  level,
+  transports: [new ConsoleTransport()],
+  prefix: "WebRTCTransport"
+});
+function cloneToArrayBuffer(view) {
+  const buffer = view.buffer;
+  const start = view.byteOffset;
+  const end = start + view.byteLength;
+  if (typeof buffer.slice === "function") {
+    return buffer.slice(start, end);
+  }
+  const result = new ArrayBuffer(view.byteLength);
+  new Uint8Array(result).set(new Uint8Array(buffer, start, view.byteLength));
+  return result;
+}
+var WebRTCTransport = class _WebRTCTransport {
+  constructor(channel, options = {}) {
+    this.listeners = {
+      message: /* @__PURE__ */ new Set(),
+      open: /* @__PURE__ */ new Set(),
+      close: /* @__PURE__ */ new Set(),
+      error: /* @__PURE__ */ new Set()
+    };
+    this.messageListener = (event) => {
+      this.dispatchMessage(event.data);
+    };
+    this.openListener = () => {
+      this.dispatch("open");
+    };
+    this.closeListener = () => {
+      this.dispatch("close");
+    };
+    this.errorListener = (event) => {
+      const rtcError = event.error;
+      const error = rtcError instanceof Error ? rtcError : new Error("RTCDataChannel error event");
+      this.dispatch("error", error);
+    };
+    if (!channel) {
+      throw new Error("RTCDataChannel instance is required");
+    }
+    this.channel = channel;
+    this.logger = options.logger ?? createDefaultLogger(options.logLevel);
+    this.bindChannelEvents();
+  }
+  static create(peer, label, options) {
+    const channel = peer.createDataChannel(label, {
+      ordered: options?.ordered,
+      maxRetransmits: options?.maxRetransmits,
+      negotiated: options?.negotiated,
+      id: options?.id,
+      protocol: options?.protocol
+    });
+    return new _WebRTCTransport(channel, options);
+  }
+  get readyState() {
+    switch (this.channel.readyState) {
+      case "connecting":
+        return "connecting";
+      case "open":
+        return "open";
+      case "closing":
+        return "closing";
+      case "closed":
+      default:
+        return "closed";
+    }
+  }
+  send(data) {
+    if (this.readyState !== "open") {
+      throw new Error("RTCDataChannel is not open");
+    }
+    try {
+      if (typeof data === "string") {
+        this.channel.send(data);
+        return;
+      }
+      if (data instanceof ArrayBuffer) {
+        this.channel.send(data);
+        return;
+      }
+      const buffer = cloneToArrayBuffer(data);
+      this.channel.send(buffer);
+    } catch (error) {
+      this.logger.error("Failed to send RTC message", { error });
+      throw error;
+    }
+  }
+  close() {
+    try {
+      this.channel.close();
+    } catch (error) {
+      this.logger.warn("Failed to close RTCDataChannel gracefully", { error });
+    }
+  }
+  on(event, handler) {
+    this.listeners[event].add(handler);
+  }
+  off(event, handler) {
+    this.listeners[event].delete(handler);
+  }
+  bindChannelEvents() {
+    if (typeof this.channel.addEventListener === "function") {
+      this.channel.addEventListener("message", this.messageListener);
+      this.channel.addEventListener("open", this.openListener);
+      this.channel.addEventListener("close", this.closeListener);
+      this.channel.addEventListener("error", this.errorListener);
+    } else {
+      this.channel.onmessage = this.messageListener;
+      this.channel.onopen = this.openListener;
+      this.channel.onclose = this.closeListener;
+      this.channel.onerror = this.errorListener;
+    }
+  }
+  dispatch(event, payload) {
+    const handlers = this.listeners[event];
+    if (handlers.size === 0) {
+      return;
+    }
+    for (const handler of handlers) {
+      try {
+        if (typeof payload === "undefined") {
+          handler();
+        } else {
+          handler(payload);
+        }
+      } catch (error) {
+        this.logger.error(`Transport handler for event "${event}" threw`, { error });
+      }
+    }
+  }
+  dispatchMessage(data) {
+    if (this.listeners.message.size === 0) {
+      return;
+    }
+    const normalized = this.normalizeInbound(data);
+    if (normalized === null) {
+      this.logger.warn("Unsupported RTCDataChannel message payload", { type: typeof data });
+      return;
+    }
+    for (const handler of this.listeners.message) {
+      try {
+        handler(normalized);
+      } catch (error) {
+        this.logger.error("Message handler threw an error", { error });
+      }
+    }
+  }
+  normalizeInbound(data) {
+    if (typeof data === "string") {
+      return data;
+    }
+    if (data instanceof ArrayBuffer) {
+      return data;
+    }
+    if (data instanceof Uint8Array) {
+      return data;
+    }
+    if (ArrayBuffer.isView(data)) {
+      const view = data;
+      return new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
+    }
+    if (typeof globalThis !== "undefined") {
+      const bufferCtor = globalThis.Buffer;
+      if (bufferCtor && bufferCtor.isBuffer(data)) {
+        const buffer = data;
+        return buffer.byteOffset === 0 && buffer.byteLength === buffer.buffer.byteLength ? buffer : buffer.slice();
+      }
+    }
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      data.arrayBuffer().then((buffer) => this.dispatchMessage(new Uint8Array(buffer))).catch((error) => {
+        this.logger.error("Failed to decode Blob message", { error });
+      });
+      return null;
+    }
+    return null;
+  }
+};
+
 // src/transports/WebSocketTransport.ts
 var READY_STATE_MAP = {
   0: "connecting",
@@ -85,7 +273,7 @@ var READY_STATE_MAP = {
   2: "closing",
   3: "closed"
 };
-var createDefaultLogger = (level = 1 /* ERROR */) => new Logger({
+var createDefaultLogger2 = (level = 1 /* ERROR */) => new Logger({
   level,
   transports: [new ConsoleTransport()],
   prefix: "WebSocketTransport"
@@ -132,7 +320,7 @@ var WebSocketTransport = class {
       throw new Error("WebSocket instance is required");
     }
     this.socket = socket;
-    this.logger = options.logger ?? createDefaultLogger(options.logLevel);
+    this.logger = options.logger ?? createDefaultLogger2(options.logLevel);
     if (options.binaryType && "binaryType" in this.socket) {
       this.socket.binaryType = options.binaryType;
     }
@@ -277,188 +465,10 @@ var WebSocketTransport = class {
     return null;
   }
 };
-
-// src/transports/WebRTCTransport.ts
-var createDefaultLogger2 = (level = 1 /* ERROR */) => new Logger({
-  level,
-  transports: [new ConsoleTransport()],
-  prefix: "WebRTCTransport"
-});
-function cloneToArrayBuffer(view) {
-  const buffer = view.buffer;
-  const start = view.byteOffset;
-  const end = start + view.byteLength;
-  if (typeof buffer.slice === "function") {
-    return buffer.slice(start, end);
-  }
-  const result = new ArrayBuffer(view.byteLength);
-  new Uint8Array(result).set(new Uint8Array(buffer, start, view.byteLength));
-  return result;
-}
-var WebRTCTransport = class _WebRTCTransport {
-  constructor(channel, options = {}) {
-    this.listeners = {
-      message: /* @__PURE__ */ new Set(),
-      open: /* @__PURE__ */ new Set(),
-      close: /* @__PURE__ */ new Set(),
-      error: /* @__PURE__ */ new Set()
-    };
-    this.messageListener = (event) => {
-      this.dispatchMessage(event.data);
-    };
-    this.openListener = () => {
-      this.dispatch("open");
-    };
-    this.closeListener = () => {
-      this.dispatch("close");
-    };
-    this.errorListener = (event) => {
-      const rtcError = event.error;
-      const error = rtcError instanceof Error ? rtcError : new Error("RTCDataChannel error event");
-      this.dispatch("error", error);
-    };
-    if (!channel) {
-      throw new Error("RTCDataChannel instance is required");
-    }
-    this.channel = channel;
-    this.logger = options.logger ?? createDefaultLogger2(options.logLevel);
-    this.bindChannelEvents();
-  }
-  static create(peer, label, options) {
-    const channel = peer.createDataChannel(label, {
-      ordered: options?.ordered,
-      maxRetransmits: options?.maxRetransmits,
-      negotiated: options?.negotiated,
-      id: options?.id,
-      protocol: options?.protocol
-    });
-    return new _WebRTCTransport(channel, options);
-  }
-  get readyState() {
-    switch (this.channel.readyState) {
-      case "connecting":
-        return "connecting";
-      case "open":
-        return "open";
-      case "closing":
-        return "closing";
-      case "closed":
-      default:
-        return "closed";
-    }
-  }
-  send(data) {
-    if (this.readyState !== "open") {
-      throw new Error("RTCDataChannel is not open");
-    }
-    try {
-      if (typeof data === "string") {
-        this.channel.send(data);
-        return;
-      }
-      if (data instanceof ArrayBuffer) {
-        this.channel.send(data);
-        return;
-      }
-      const buffer = cloneToArrayBuffer(data);
-      this.channel.send(buffer);
-    } catch (error) {
-      this.logger.error("Failed to send RTC message", { error });
-      throw error;
-    }
-  }
-  close() {
-    try {
-      this.channel.close();
-    } catch (error) {
-      this.logger.warn("Failed to close RTCDataChannel gracefully", { error });
-    }
-  }
-  on(event, handler) {
-    this.listeners[event].add(handler);
-  }
-  off(event, handler) {
-    this.listeners[event].delete(handler);
-  }
-  bindChannelEvents() {
-    if (typeof this.channel.addEventListener === "function") {
-      this.channel.addEventListener("message", this.messageListener);
-      this.channel.addEventListener("open", this.openListener);
-      this.channel.addEventListener("close", this.closeListener);
-      this.channel.addEventListener("error", this.errorListener);
-    } else {
-      this.channel.onmessage = this.messageListener;
-      this.channel.onopen = this.openListener;
-      this.channel.onclose = this.closeListener;
-      this.channel.onerror = this.errorListener;
-    }
-  }
-  dispatch(event, payload) {
-    const handlers = this.listeners[event];
-    if (handlers.size === 0) {
-      return;
-    }
-    for (const handler of handlers) {
-      try {
-        if (typeof payload === "undefined") {
-          handler();
-        } else {
-          handler(payload);
-        }
-      } catch (error) {
-        this.logger.error(`Transport handler for event "${event}" threw`, { error });
-      }
-    }
-  }
-  dispatchMessage(data) {
-    if (this.listeners.message.size === 0) {
-      return;
-    }
-    const normalized = this.normalizeInbound(data);
-    if (normalized === null) {
-      this.logger.warn("Unsupported RTCDataChannel message payload", { type: typeof data });
-      return;
-    }
-    for (const handler of this.listeners.message) {
-      try {
-        handler(normalized);
-      } catch (error) {
-        this.logger.error("Message handler threw an error", { error });
-      }
-    }
-  }
-  normalizeInbound(data) {
-    if (typeof data === "string") {
-      return data;
-    }
-    if (data instanceof ArrayBuffer) {
-      return data;
-    }
-    if (data instanceof Uint8Array) {
-      return data;
-    }
-    if (ArrayBuffer.isView(data)) {
-      const view = data;
-      return new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
-    }
-    if (typeof globalThis !== "undefined") {
-      const bufferCtor = globalThis.Buffer;
-      if (bufferCtor && bufferCtor.isBuffer(data)) {
-        const buffer = data;
-        return buffer.byteOffset === 0 && buffer.byteLength === buffer.buffer.byteLength ? buffer : buffer.slice();
-      }
-    }
-    if (typeof Blob !== "undefined" && data instanceof Blob) {
-      data.arrayBuffer().then((buffer) => this.dispatchMessage(new Uint8Array(buffer))).catch((error) => {
-        this.logger.error("Failed to decode Blob message", { error });
-      });
-      return null;
-    }
-    return null;
-  }
-};
 export {
   WebRTCTransport,
-  WebSocketTransport
+  WebSocketTransport,
+  isTransportClosed,
+  isTransportReady
 };
 //# sourceMappingURL=index.js.map
