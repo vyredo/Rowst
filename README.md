@@ -6,7 +6,7 @@ Request-response correlation over bidirectional transports (WebSocket, WebRTC). 
 
 - 🔄 **Request-Response Correlation** - Automatic matching of requests with responses
 - 🌐 **Multiple Transports** - WebSocket, WebRTC, or custom transports
-- ⚡ **Express-like API** - Familiar routing patterns for WebSocket communication
+- ⚡ **Unified Context API** - Single handler for both HTTP and WebSocket (NEW!)
 - 🔌 **HTTP Bridge** - Route HTTP requests to WebSocket backends
 - 🎯 **Type Safe** - Full TypeScript support with generics
 - ⏱️ **Timeouts & Retries** - Built-in error handling and retry logic
@@ -53,9 +53,72 @@ const response = await resolver.request(
 console.log(response.payload);
 ```
 
-### Express-like API (NEW!)
+### Unified Context API (NEW! ⭐)
 
-The simplest way to build REST-like APIs over WebSocket:
+Write **one handler** that works seamlessly for both HTTP and WebSocket:
+
+```typescript
+import { Hono } from 'hono';
+import { WebSocketServer } from 'ws';
+import { AsyncResolver, WebSocketTransport } from 'rowst';
+import { RowstRoute } from 'rowst/express';
+
+// Setup
+const app = new Hono();
+const ws = new WebSocket('ws://upstream-service');
+const resolver = new AsyncResolver(new WebSocketTransport(ws));
+const routes = new RowstRoute({ app, resolver });
+
+// Attach WebSocket server for direct WS clients
+const wss = new WebSocketServer({ port: 4200 });
+routes.attachWebSocketServer(wss);
+
+// Single handler for BOTH HTTP and WebSocket! 🎉
+routes.post(
+  { rest: '/api/comments', event: 'get_comment', timeoutMs: 10000 },
+  async (ctx) => {
+    // Unified input - works for both HTTP and WS
+    const { postUrl, limit = 50 } = await ctx.body();
+    
+    if (!postUrl) {
+      return ctx.json({ error: 'postUrl required' }, { status: 400 });
+    }
+    
+    // Unified output - works for both HTTP and WS
+    return ctx.json({
+      ok: true,
+      postUrl,
+      limit,
+      origin: ctx.origin  // "http" or "ws"
+    });
+  }
+);
+
+// Start HTTP server
+export default app;
+```
+
+**What you get:**
+
+- ✅ HTTP POST to `/api/comments` → works
+- ✅ WebSocket event `get_comment` → works
+- ✅ Same handler, same code, zero duplication
+- ✅ Origin detection via `ctx.origin` when needed
+
+**Key Features:**
+
+- `ctx.body()` - Parse request body (HTTP JSON or WS payload)
+- `ctx.json()` / `ctx.text()` - Send responses (HTTP Response or WS envelope)
+- `ctx.status()` - Set status code
+- `ctx.headers`, `ctx.query`, `ctx.params` - Access metadata
+- `ctx.notify()` - Fire-and-forget notifications
+- `ctx.forward()` - Forward to upstream with retries
+
+See [`docs/UNIFIED_CONTEXT_API.md`](docs/UNIFIED_CONTEXT_API.md) for complete guide.
+
+### Express-like API (Legacy)
+
+The original API is still supported:
 
 ```typescript
 import { Hono } from 'hono';
@@ -321,9 +384,11 @@ Check out the [`examples/`](examples/) directory:
 - [`websocket-basic/`](examples/websocket-basic/) - Basic WebSocket client/server
 - [`webrtc-p2p/`](examples/webrtc-p2p/) - Peer-to-peer WebRTC communication
 - [`express-api/`](examples/express-api/) - Express-like API with Hono
+  - [`unified-demo.ts`](examples/express-api/unified-demo.ts) - Unified context demo (NEW!)
 
 ## Documentation
 
+- [Unified Context API](docs/UNIFIED_CONTEXT_API.md) - Single handler for HTTP + WebSocket (NEW!)
 - [API Reference](docs/API.md) - Core AsyncResolver API
 - [Express-like API](docs/EXPRESS_API.md) - Simplified routing API
 - [HTTP Router Guide](docs/HTTP_ROUTER.md) - HTTP-to-WebSocket bridge

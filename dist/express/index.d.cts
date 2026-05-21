@@ -45,6 +45,10 @@ interface UpstreamResponse<T = unknown> {
     message: Message<unknown>;
 }
 /**
+ * Origin of the request
+ */
+type Origin = "http" | "ws";
+/**
  * WebSocket context for making requests to upstream
  */
 interface WebSocketContext {
@@ -63,13 +67,102 @@ interface WebSocketContext {
         retries?: number;
     }): Promise<UpstreamResponse<T>>;
     /**
-     * Send a fire-and-forget message to upstream
+     * Send a fire-and-forget message to upstream (HTTP origin)
+     * OR respond directly to the current WS request (WS origin)
      * @param payload - Payload to send
+     * @param init - Optional status and headers (WS origin only)
      */
-    send(payload?: unknown): void;
+    send(payload?: unknown, init?: {
+        status?: number;
+        headers?: Record<string, string>;
+    }): void;
 }
 /**
- * Context passed to route handlers
+ * Unified context for route handlers (works for both HTTP and WS)
+ */
+interface RowstRouteContext {
+    /**
+     * Origin of the request: "http" or "ws"
+     */
+    origin: Origin;
+    /**
+     * Optional convenience flags/metadata (additive)
+     */
+    forwardingHttp?: boolean;
+    meta?: {
+        requestId?: string;
+        forwarded?: boolean;
+        transport?: "ws";
+    };
+    /**
+     * Unified input: parse request body
+     * - HTTP: reads from honoContext.req.json() with fallback
+     * - WS: returns payload.body ?? payload
+     */
+    body<T = unknown>(): Promise<T>;
+    /**
+     * Unified output: send JSON response
+     * - HTTP: returns a Response object
+     * - WS: sends Rowst response envelope and returns void
+     */
+    json(data: unknown, init?: {
+        status?: number;
+        headers?: Record<string, string>;
+    }): Response | void;
+    /**
+     * Unified output: send text response
+     * - HTTP: returns a Response object
+     * - WS: sends Rowst response envelope and returns void
+     */
+    text(body: string, init?: {
+        status?: number;
+        headers?: Record<string, string>;
+    }): Response | void;
+    /**
+     * Set status code for next json/text call (sticky)
+     */
+    status(code: number): void;
+    /**
+     * Request headers (normalized)
+     */
+    headers: Record<string, string>;
+    /**
+     * Query string (including leading ?)
+     */
+    query: string;
+    /**
+     * URL parameters
+     */
+    params: Record<string, string>;
+    /**
+     * Send a fire-and-forget notification
+     */
+    notify(payload: unknown): void;
+    /**
+     * Forward request to upstream and await response
+     */
+    forward<T = unknown>(payload?: unknown, opts?: {
+        timeout?: number;
+        retries?: number;
+    }): Promise<T>;
+    /**
+     * Internal: Full Hono context (for advanced use cases)
+     * @internal
+     */
+    _honoContext: Context;
+    /**
+     * Internal: WebSocket context (for advanced use cases)
+     * @internal
+     */
+    _websocketContext: WebSocketContext;
+    /**
+     * Optional non-underscored aliases for convenience (back-compat helpers)
+     */
+    honoContext?: Context;
+    websocketContext?: WebSocketContext;
+}
+/**
+ * Context passed to route handlers (legacy, for backwards compatibility)
  */
 interface RowstRouteHandlerContext {
     /**
@@ -82,9 +175,9 @@ interface RowstRouteHandlerContext {
     websocketContext: WebSocketContext;
 }
 /**
- * Route handler function
+ * Route handler function (unified context)
  */
-type RowstHandler = (ctx: RowstRouteHandlerContext) => Promise<Response> | Response;
+type RowstHandler = (ctx: RowstRouteContext) => Promise<Response | void> | Response | void;
 /**
  * Options for creating a RowstRoute instance
  */
@@ -164,10 +257,9 @@ interface UpstreamResponseEnvelope {
  *
  * routes.post(
  *   { rest: "/api/comments", event: "get_comment" },
- *   async ({ honoContext, websocketContext }) => {
- *     const data = await honoContext.req.json();
- *     const result = await websocketContext.request(data);
- *     return honoContext.json(result.data, result.status);
+ *   async (ctx) => {
+ *     const data = await ctx.body();
+ *     return ctx.json({ ok: true, origin: ctx.origin });
  *   }
  * );
  * ```
@@ -175,6 +267,7 @@ interface UpstreamResponseEnvelope {
 declare class RowstRoute {
     private readonly app;
     private readonly resolver;
+    private readonly eventRegistry;
     constructor(options: RowstRouteOptions);
     /**
      * Register a GET route
@@ -205,6 +298,10 @@ declare class RowstRoute {
      */
     private registerRoute;
     /**
+     * Create unified context for HTTP origin
+     */
+    private createHttpContext;
+    /**
      * Create a WebSocket context for the current request
      */
     private createWebSocketContext;
@@ -216,6 +313,23 @@ declare class RowstRoute {
      * Parse the response from upstream into a structured format
      */
     private parseResponse;
+    /**
+     * Attach a Node-style WebSocket server (e.g., ws.WebSocketServer) to handle
+     * Rowst "request" envelopes directly using the SAME registered handlers.
+     * Each incoming WS "request" must contain payload.event set to the event name.
+     * Replies are sent as Rowst "response" envelopes with the same id.
+     */
+    attachWebSocketServer(server: {
+        on(event: "connection", cb: (socket: any) => void): void;
+    }): void;
+    /**
+     * Create unified context for WebSocket origin
+     */
+    private createWsContext;
+    /** Create a minimal Hono-like context backed by the WS payload */
+    private createSyntheticHonoContext;
+    /** Convert a Response to an UpstreamResponseEnvelope */
+    private responseToEnvelope;
 }
 
 export { type RowstHandler, RowstRoute, type RowstRouteConfig, type RowstRouteHandlerContext, type RowstRouteOptions, type UpstreamRequestPayload, type UpstreamResponse, type UpstreamResponseEnvelope, type WebSocketContext };

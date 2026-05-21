@@ -1,6 +1,6 @@
 {
 	"name": "rowst",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Zero-dependency request-response correlation over bidirectional transports (REST over WebSocket/Transport)",
 	"keywords": [
 		"rest",
