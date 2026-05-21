@@ -175,8 +175,8 @@ export interface RowstRouteContext {
 	/**
 	 * Optional non-underscored aliases for convenience (back-compat helpers)
 	 */
-	honoContext?: HonoContext;
-	websocketContext?: WebSocketContext;
+	honoContext: HonoContext;
+	websocketContext: WebSocketContext;
 }
 
 /**

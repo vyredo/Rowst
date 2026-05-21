@@ -8,6 +8,7 @@ export interface MockTransportOptions {
   delayMs?: number;
   failSend?: boolean;
   echoTransform?: (payload: unknown) => unknown;
+  openDelayMs?: number;
 }
 
 /**

@@ -29,29 +29,29 @@
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
+			"types": "./dist/index.d.ts",
 			"require": "./dist/index.cjs",
-			"import": "./dist/index.js",
-			"types": "./dist/index.d.ts"
+			"import": "./dist/index.js"
 		},
 		"./mcp": {
+			"types": "./dist/mcp/index.d.ts",
 			"require": "./dist/mcp/index.cjs",
-			"import": "./dist/mcp/index.js",
-			"types": "./dist/mcp/index.d.ts"
+			"import": "./dist/mcp/index.js"
 		},
 		"./workers": {
+			"types": "./dist/workers/index.d.ts",
 			"require": "./dist/workers/index.cjs",
-			"import": "./dist/workers/index.js",
-			"types": "./dist/workers/index.d.ts"
+			"import": "./dist/workers/index.js"
 		},
 		"./http": {
+			"types": "./dist/http/index.d.ts",
 			"require": "./dist/http/index.cjs",
-			"import": "./dist/http/index.js",
-			"types": "./dist/http/index.d.ts"
+			"import": "./dist/http/index.js"
 		},
 		"./express": {
+			"types": "./dist/express/index.d.ts",
 			"require": "./dist/express/index.cjs",
-			"import": "./dist/express/index.js",
-			"types": "./dist/express/index.d.ts"
+			"import": "./dist/express/index.js"
 		}
 	},
 	"peerDependencies": {

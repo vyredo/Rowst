@@ -158,8 +158,8 @@ interface RowstRouteContext {
     /**
      * Optional non-underscored aliases for convenience (back-compat helpers)
      */
-    honoContext?: Context;
-    websocketContext?: WebSocketContext;
+    honoContext: Context;
+    websocketContext: WebSocketContext;
 }
 /**
  * Context passed to route handlers (legacy, for backwards compatibility)
