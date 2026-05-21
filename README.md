@@ -1,434 +1,221 @@
 # Rowst
 
-Request-response correlation over bidirectional transports (WebSocket, WebRTC). Build REST-like APIs over WebSocket with automatic request/response matching, timeouts, retries, and type safety.
+**Zero-dependency request-response correlation over bidirectional transports**
+
+*REST over WebSocket • REST over WebRTC • Transport-Agnostic RPC*
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-green.svg)](https://www.npmjs.com/package/rowst)
+
+---
+
+A TypeScript library that adds request-response semantics (correlation, timeouts, retries, metrics) on top of any bidirectional transport like WebSocket or WebRTC DataChannel. Zero runtime dependencies.
 
 ## Features
 
-- 🔄 **Request-Response Correlation** - Automatic matching of requests with responses
-- 🌐 **Multiple Transports** - WebSocket, WebRTC, or custom transports
-- ⚡ **Unified Context API** - Single handler for both HTTP and WebSocket (NEW!)
-- 🔌 **HTTP Bridge** - Route HTTP requests to WebSocket backends
-- 🎯 **Type Safe** - Full TypeScript support with generics
-- ⏱️ **Timeouts & Retries** - Built-in error handling and retry logic
-- 🧩 **MCP Integration** - Model Context Protocol server support
-- 🔧 **Framework Adapters** - Works with Hono, Express, and Fastify
-
-## Installation
-
-```bash
-npm install rowst
-```
-
-Optional peer dependencies for specific features:
-
-```bash
-# For Express-like API or HTTP Router
-npm install hono
-
-# For Express adapter
-npm install express
-
-# For Fastify adapter
-npm install fastify
-```
+- **Zero dependencies** — no external libraries, 100% self-contained
+- **Transport agnostic** — works with WebSocket, WebRTC DataChannel, or custom transports
+- **Request-response correlation** — UUID-based tracking for async requests
+- **Built-in metrics** — latency percentiles (p50/p95/p99), inflight count, error tracking
+- **Pluggable logging** — custom log transports with configurable levels
+- **Retry logic** — exponential backoff with jitter for failed requests
+- **Backpressure** — configurable max inflight limit
+- **Type-safe** — full TypeScript with strict mode
 
 ## Quick Start
 
-### Basic Request-Response
+### WebSocket Example
 
-```typescript
-import { AsyncResolver, WebSocketTransport } from 'rowst';
+```ts
+import {
+  AsyncResolver,
+  WebSocketTransport,
+  Logger,
+  LogLevel,
+  ConsoleTransport
+} from './src/index.js';
 
-// Connect to WebSocket server
-const ws = new WebSocket('ws://localhost:8080');
+const logger = new Logger({
+  level: LogLevel.INFO,
+  transports: [new ConsoleTransport()],
+  prefix: 'MyApp'
+});
+
+const ws = new WebSocket('wss://api.example.com');
 const transport = new WebSocketTransport(ws);
-const resolver = new AsyncResolver(transport);
 
-// Send request and await response
-const response = await resolver.request(
-  { action: 'getData', id: 123 },
-  { timeout: 5000 }
-);
+const resolver = new AsyncResolver(transport, {
+  defaultTimeout: 30000,
+  maxInflight: 1000,
+  logger
+});
+
+const response = await resolver.request<{ user: unknown }>({
+  action: 'fetchUser',
+  userId: 123
+}, {
+  timeout: 5000,
+  tags: ['users', 'read']
+});
 
 console.log(response.payload);
 ```
 
-### Unified Context API (NEW! ⭐)
+### WebRTC Example
 
-Write **one handler** that works seamlessly for both HTTP and WebSocket:
+```ts
+import { AsyncResolver, WebRTCTransport } from './src/index.js';
 
-```typescript
-import { Hono } from 'hono';
-import { WebSocketServer } from 'ws';
-import { AsyncResolver, WebSocketTransport } from 'rowst';
-import { RowstRoute } from 'rowst/express';
+const peerConnection = new RTCPeerConnection();
+const dataChannel = peerConnection.createDataChannel('rpc', {
+  ordered: true,
+  maxRetransmits: 3
+});
 
-// Setup
-const app = new Hono();
-const ws = new WebSocket('ws://upstream-service');
-const resolver = new AsyncResolver(new WebSocketTransport(ws));
-const routes = new RowstRoute({ app, resolver });
+const transport = new WebRTCTransport(dataChannel);
+const resolver = new AsyncResolver(transport, { defaultTimeout: 10000 });
 
-// Attach WebSocket server for direct WS clients
-const wss = new WebSocketServer({ port: 4200 });
-routes.attachWebSocketServer(wss);
-
-// Single handler for BOTH HTTP and WebSocket! 🎉
-routes.post(
-  { rest: '/api/comments', event: 'get_comment', timeoutMs: 10000 },
-  async (ctx) => {
-    // Unified input - works for both HTTP and WS
-    const { postUrl, limit = 50 } = await ctx.body();
-    
-    if (!postUrl) {
-      return ctx.json({ error: 'postUrl required' }, { status: 400 });
-    }
-    
-    // Unified output - works for both HTTP and WS
-    return ctx.json({
-      ok: true,
-      postUrl,
-      limit,
-      origin: ctx.origin  // "http" or "ws"
-    });
-  }
-);
-
-// Start HTTP server
-export default app;
+const result = await resolver.request<{ command: string }>({ command: 'ping' });
+console.log(`RTT: ${result.latency}ms`);
 ```
-
-**What you get:**
-
-- ✅ HTTP POST to `/api/comments` → works
-- ✅ WebSocket event `get_comment` → works
-- ✅ Same handler, same code, zero duplication
-- ✅ Origin detection via `ctx.origin` when needed
-
-**Key Features:**
-
-- `ctx.body()` - Parse request body (HTTP JSON or WS payload)
-- `ctx.json()` / `ctx.text()` - Send responses (HTTP Response or WS envelope)
-- `ctx.status()` - Set status code
-- `ctx.headers`, `ctx.query`, `ctx.params` - Access metadata
-- `ctx.notify()` - Fire-and-forget notifications
-- `ctx.forward()` - Forward to upstream with retries
-
-See [`docs/UNIFIED_CONTEXT_API.md`](docs/UNIFIED_CONTEXT_API.md) for complete guide.
-
-### Express-like API (Legacy)
-
-The original API is still supported:
-
-```typescript
-import { Hono } from 'hono';
-import { AsyncResolver, WebSocketTransport } from 'rowst';
-import { RowstRoute } from 'rowst/express';
-
-// Setup
-const app = new Hono();
-const ws = new WebSocket('ws://upstream-service');
-const resolver = new AsyncResolver(new WebSocketTransport(ws));
-const routes = new RowstRoute({ app, resolver });
-
-// Register routes
-routes.post(
-  { rest: '/api/comments', event: 'get_comment', timeoutMs: 10000 },
-  async ({ honoContext, websocketContext }) => {
-    const { postUrl, limit } = await honoContext.req.json();
-    
-    // Forward to upstream WebSocket
-    const result = await websocketContext.request({ postUrl, limit });
-    
-    return honoContext.json(result.data, result.status);
-  }
-);
-
-routes.get(
-  { rest: '/api/users/:id', event: 'get_user' },
-  async ({ honoContext, websocketContext }) => {
-    const userId = honoContext.req.param('id');
-    
-    const result = await websocketContext.request({ userId });
-    
-    return honoContext.json(result.data);
-  }
-);
-
-// Start server
-export default app;
-```
-
-**Benefits:**
-
-- Single file per route (vs 3+ files with manual implementation)
-- Automatic request/response correlation
-- Built-in error handling and retries
-- Type-safe with full IntelliSense
-
-See [`docs/EXPRESS_API.md`](docs/EXPRESS_API.md) for complete documentation.
-
-### HTTP-to-WebSocket Router
-
-Bridge HTTP REST APIs to WebSocket backends with Express-style routing:
-
-```typescript
-import { AsyncResolver, WebSocketTransport } from 'rowst';
-import { RowstRouter, HonoAdapter } from 'rowst/http';
-import { Hono } from 'hono';
-
-// Create WebSocket connection
-const ws = new WebSocket('ws://backend.example.com');
-const resolver = new AsyncResolver(new WebSocketTransport(ws));
-
-// Create router
-const router = new RowstRouter(resolver);
-
-// Register routes
-router.get('/api/users/:id', 'fetchUser');
-router.post('/api/posts', 'createPost');
-router.delete('/api/posts/:id', 'deletePost');
-
-// Integrate with Hono
-const app = new Hono();
-new HonoAdapter(router).register(app);
-```
-
-**What the backend receives:**
-
-```json
-{
-  "method": "GET",
-  "path": "/api/users/123",
-  "query": "?include=posts",
-  "headers": { "authorization": "Bearer ..." },
-  "params": { "id": "123" },
-  "event": "fetchUser"
-}
-```
-
-**What the backend responds:**
-
-```json
-{
-  "status": 200,
-  "headers": { "content-type": "application/json" },
-  "bodyText": "{\"user\":{\"id\":\"123\"}}"
-}
-```
-
-See [`docs/HTTP_ROUTER.md`](docs/HTTP_ROUTER.md) for details.
 
 ## Core Concepts
 
-### AsyncResolver
+### Transport
 
-The core correlation engine that matches requests with responses:
+A transport is any bidirectional communication channel that implements the `Transport` interface:
 
-```typescript
-import { AsyncResolver, WebSocketTransport } from 'rowst';
-
-const resolver = new AsyncResolver(transport, {
-  defaultTimeout: 30000,      // Default timeout in ms
-  maxInflight: 1000,          // Max concurrent requests
-  deduplicateRequests: true,  // Deduplicate identical requests
-});
-
-// Make a request
-const response = await resolver.request(payload, {
-  timeout: 5000,
-  retries: 2,
-  tags: ['important'],
-});
-
-// Fire-and-forget notification
-resolver.notify({ event: 'log', message: 'Hello' });
-
-// Get metrics
-const metrics = resolver.getMetrics();
-console.log(metrics.totalRequests, metrics.totalTimeouts);
-```
-
-### Transports
-
-#### WebSocket Transport
-
-```typescript
-import { WebSocketTransport } from 'rowst';
-
-// Browser WebSocket
-const ws = new WebSocket('ws://localhost:8080');
-const transport = new WebSocketTransport(ws);
-
-// Node.js with 'ws' library
-import WebSocket from 'ws';
-const ws = new WebSocket('ws://localhost:8080');
-const transport = new WebSocketTransport(ws);
-```
-
-#### WebRTC Transport
-
-```typescript
-import { WebRTCTransport } from 'rowst';
-
-const peerConnection = new RTCPeerConnection(config);
-const dataChannel = peerConnection.createDataChannel('rowst');
-const transport = new WebRTCTransport(dataChannel);
-```
-
-#### Custom Transport
-
-Implement the `Transport` interface:
-
-```typescript
+```ts
 interface Transport {
-  readonly readyState: 'connecting' | 'open' | 'closing' | 'closed';
+  readonly readyState: TransportState;
   send(data: string | ArrayBuffer | Uint8Array): void;
   close(): void;
-  on(event: 'message' | 'open' | 'close' | 'error', handler: Function): void;
-  off(event: 'message' | 'open' | 'close' | 'error', handler: Function): void;
+  on<K extends keyof TransportEvents>(event: K, handler: TransportEvents[K]): void;
+  off<K extends keyof TransportEvents>(event: K, handler: TransportEvents[K]): void;
 }
 ```
 
-## Advanced Features
+**Built-in transports:**
 
-### Timeouts and Retries
+- `WebSocketTransport` — wraps browser WebSocket or Node.js `ws` module
+- `WebRTCTransport` — wraps `RTCDataChannel`
 
-```typescript
-const response = await resolver.requestWithRetry(payload, {
-  timeout: 5000,
-  retries: 3,
-  backoffMultiplier: 2,
-  jitterFactor: 0.25,
-});
-```
+### AsyncResolver
 
-### Request Deduplication
+The core correlation engine that manages request-response pairs:
 
-```typescript
+```ts
 const resolver = new AsyncResolver(transport, {
-  deduplicateRequests: true,  // or provide custom function
-});
-
-// These will share the same underlying request
-const [res1, res2] = await Promise.all([
-  resolver.request({ id: 123 }),
-  resolver.request({ id: 123 }),
-]);
-```
-
-### Response Interceptor
-
-```typescript
-const resolver = new AsyncResolver(transport, {
-  responseInterceptor: async (message) => {
-    // Validate or transform responses
-    if (message.payload.error) {
-      throw new Error(message.payload.error);
-    }
-    return message;
-  },
+  defaultTimeout: 30000,   // 30 seconds
+  maxInflight: 1000,       // max concurrent requests
+  logger: myLogger         // optional
 });
 ```
 
-### Worker Pool (Optional)
+### Message Format
 
-Offload JSON serialization to worker threads:
-
-```typescript
-import { WorkerPoolResolver } from 'rowst/workers';
-
-const resolver = new WorkerPoolResolver(transport, {
-  poolSize: 4,
-  defaultTimeout: 30000,
-});
+```ts
+interface Message<T> {
+  id: string;
+  type: 'request' | 'response' | 'notification';
+  payload: T;
+  timestamp?: string;
+  meta?: { attempts?: number; tags?: string[] };
+  error?: { code: string; message: string; details?: unknown };
+}
 ```
 
-## MCP Integration
+## API Reference
 
-Expose tools via the Model Context Protocol:
+### AsyncResolver
 
-```typescript
-import { RowstMCPServer } from 'rowst/mcp';
+**Constructor:** `new AsyncResolver(transport, options?)`
 
-const server = new RowstMCPServer(resolver, {
-  name: 'my-service',
-  version: '1.0.0',
-});
+| Option | Default | Description |
+|---|---|---|
+| `defaultTimeout` | 30000 | Default request timeout (ms) |
+| `maxInflight` | 1000 | Maximum concurrent requests |
+| `latencySampleSize` | 1000 | Rolling sample size for latency stats |
+| `logger` | silent | Logger instance |
 
-server.addTool({
-  name: 'getData',
-  description: 'Fetch data by ID',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      id: { type: 'string' },
-    },
-    required: ['id'],
-  },
-  handler: async (input) => {
-    const response = await resolver.request({ action: 'getData', ...input });
-    return response.payload;
-  },
-});
+**Methods:**
 
-await server.start();
+`request<TResponse, TRequest>(payload, options?)` — Send a request and wait for response.
+
+```ts
+const response = await resolver.request<{ data: unknown }>(
+  { action: 'getData' },
+  { timeout: 5000, tags: ['api'] }
+);
 ```
 
-See [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md) for details.
+`requestWithRetry<TResponse, TRequest>(payload, options?)` — Send with automatic retry on timeout.
+
+```ts
+const response = await resolver.requestWithRetry(
+  { action: 'getData' },
+  { retries: 3, timeout: 5000 }
+);
+```
+
+`notify(payload)` — Fire-and-forget notification (no response expected).
+
+`getMetrics()` — Returns current metrics including latency percentiles (p50/p95/p99).
+
+`getInflightCount()` — Number of pending requests.
+
+`destroy()` — Cleanup and reject all pending requests.
+
+### Logger
+
+Pluggable logging with configurable levels: `SILENT`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE`.
+
+Built-in transports: `ConsoleTransport`, `NoopTransport`. Custom transports implement the `LogTransport` interface.
 
 ## Examples
 
-Check out the [`examples/`](examples/) directory:
+See [`examples/`](./examples):
 
-- [`websocket-basic/`](examples/websocket-basic/) - Basic WebSocket client/server
-- [`webrtc-p2p/`](examples/webrtc-p2p/) - Peer-to-peer WebRTC communication
-- [`express-api/`](examples/express-api/) - Express-like API with Hono
-  - [`unified-demo.ts`](examples/express-api/unified-demo.ts) - Unified context demo (NEW!)
+- **[WebSocket Basic](./examples/websocket-basic)** — client-server example
+- **[WebRTC P2P](./examples/webrtc-p2p)** — peer-to-peer communication
 
-## Documentation
+## HTTP Router
 
-- [Unified Context API](docs/UNIFIED_CONTEXT_API.md) - Single handler for HTTP + WebSocket (NEW!)
-- [API Reference](docs/API.md) - Core AsyncResolver API
-- [Express-like API](docs/EXPRESS_API.md) - Simplified routing API
-- [HTTP Router Guide](docs/HTTP_ROUTER.md) - HTTP-to-WebSocket bridge
-- [Transport Guide](docs/TRANSPORT_GUIDE.md) - Transport implementations
-- [MCP Integration](docs/MCP_INTEGRATION.md) - Model Context Protocol
+Maps REST-style HTTP routes to WebSocket events, with framework adapters for Hono, Express, and Fastify.
 
-## TypeScript Support
+```ts
+import { RowstRouter } from './src/http/index.js';
 
-Rowst is written in TypeScript and provides full type definitions:
+const router = new RowstRouter(resolver);
 
-```typescript
-interface User {
-  id: string;
-  name: string;
-}
+router.get('/api/users', 'get_users');
+router.post('/api/users', 'create_user');
+router.get('/api/users/:id', 'get_user_by_id');
 
-const response = await resolver.request<User>({ action: 'getUser', id: '123' });
-// response.payload is typed as User
+const response = await router.handle({
+  method: 'GET',
+  path: '/api/users/42',
+  headers: {},
+});
 ```
 
-## Error Handling
+Route parameters (`:id`) are extracted and passed as `payload.params` to the WebSocket handler. Built-in error mapping: timeouts → 504, transport closed → 503, etc.
 
-```typescript
-import { TimeoutError, TransportClosedError } from 'rowst';
+## Development
 
-try {
-  const response = await resolver.request(payload, { timeout: 5000 });
-} catch (error) {
-  if (error instanceof TimeoutError) {
-    console.error('Request timed out');
-  } else if (error instanceof TransportClosedError) {
-    console.error('Connection closed');
-  }
-}
+```bash
+npm install        # install dev dependencies
+npm run typecheck  # TypeScript strict check
+npm run build      # build CJS + ESM + type declarations
+npm test           # build + run all tests
+npm run lint       # ESLint
 ```
-
-## License
-
-MIT
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+See [CONTRIBUTING.md](./CONTRIBUTING.md). PRs welcome.
+
+## License
+
+MIT © [Vidy Alfredo](https://github.com/vyredo)

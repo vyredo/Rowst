@@ -13,16 +13,16 @@
 		"zero-dependency",
 		"mcp"
 	],
-	"author": "Your Name <your.email@example.com>",
-	"license": "MIT",
-	"homepage": "https://github.com/yourusername/rowst#readme",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/yourusername/rowst.git"
-	},
-	"bugs": {
-		"url": "https://github.com/yourusername/rowst/issues"
-	},
+  "author": "Vidy Alfredo <alfredovidy@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/vyredo/rowst#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vyredo/rowst.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vyredo/rowst/issues"
+  },
 	"type": "module",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.js",
